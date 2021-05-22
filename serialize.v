@@ -7,9 +7,9 @@ const (
 	max_u32 = 4294967295
 )
 
-type CompactSize = u64
+pub type CompactSize = u64
 
-interface Serializable {
+pub interface Serializable {
 	serialize(mut buf []byte)
 	deserialize(mut buf []byte)
 }
@@ -22,7 +22,7 @@ interface Serializable {
 	return *ptr
 }*/
 
-fn serialize_array<T>(obj []T, mut buf []byte) {
+pub fn serialize_array<T>(obj []T, mut buf []byte) {
 	serialize(CompactSize(u64(obj.len)), buf)
 	buf.grow_len(sizeof(T) * obj.len)
 	for elem in obj {
@@ -37,42 +37,68 @@ pub fn serialize<T>(obj T, mut buf []byte) {
 
 	$if T is voidptr {
 		panic('serialize: cannot serialize voidptr')
-	} $else $if obj is CompactSize {
+	} $else $if T is CompactSize {
 		if obj < 253 {
 			buf << byte(obj)
 		} else if obj <= serialize.max_u16 {
-			buf.grow_len(3)
+			unsafe {
+				buf.grow_len(3)
+			}
 			buf << 253
 			serialize(u16(obj), buf)
 		} else if obj <= serialize.max_u32 {
-			buf.grow_len(5)
+			unsafe {
+				buf.grow_len(5)
+			}
 			buf << 254
 			serialize(u32(obj), buf)
 		} else {
-			buf.grow_len(9)
+			unsafe {
+				buf.grow_len(9)
+			}
 			buf << 255
 			serialize(u64(obj), buf)
 		}
 	} $else $if T is array {
 		serialize_array(obj, buf)
-	} $else $if obj is bool || obj is byte || obj is i8 {
+	} $else $if T is bool {
 		buf << byte(obj)
-	} $else $if obj is u16 {
-		buf.grow_len(2)
+	} $else $if T is byte {
+		buf << obj
+	} $else $if T is i8 {
+		buf << byte(obj)
+	} $else $if T is u16 {
+		unsafe {
+			buf.grow_len(2)
+		}
 		buf << byte(obj)
 		buf << byte(obj & 0xFF00 >> 8)
-	} $else $if obj is i16 {
-		buf.grow_len(2)
+	} $else $if T is i16 {
+		unsafe {
+			buf.grow_len(2)
+		}
 		buf << byte(obj)
 		buf << byte(obj & 0xFF00 >> 8)
-	} $else $if obj is u32 || obj is int {
-		buf.grow_len(4)
+	} $else $if T is u32 {
+		unsafe {
+			buf.grow_len(4)
+		}
 		buf << byte(obj)
 		buf << byte(obj & 0xFF00 >> 8)
 		buf << byte(obj & 0xFF0000 >> 16)
 		buf << byte(obj & 0xFF000000 >> 24)
-	} $else $if obj is u64 || obj is i64 {
-		buf.grow_len(8)
+	} $else $if T is int {
+		unsafe {
+			buf.grow_len(4)
+		}
+		buf << byte(obj)
+		buf << byte(obj & 0xFF00 >> 8)
+		buf << byte(obj & 0xFF0000 >> 16)
+		buf << byte(obj & 0xFF000000 >> 24)
+	} $else $if T is u64 {
+		unsafe {
+			buf.grow_len(8)
+		}
 		buf << byte(obj)
 		buf << byte(obj & 0xFF00 >> 8)
 		buf << byte(obj & 0xFF0000 >> 16)
@@ -81,26 +107,34 @@ pub fn serialize<T>(obj T, mut buf []byte) {
 		buf << byte(obj & 0xFF0000000000 >> 40)
 		buf << byte(obj & 0xFF000000000000 >> 48)
 		buf << byte(obj & 0xFF00000000000000 >> 56)
-	} $else $if obj is string {
+	} $else $if T is i64 {
+		unsafe {
+			buf.grow_len(8)
+		}
+		buf << byte(obj)
+		buf << byte(obj & 0xFF00 >> 8)
+		buf << byte(obj & 0xFF0000 >> 16)
+		buf << byte(obj & 0xFF000000 >> 24)
+		buf << byte(obj & 0xFF00000000 >> 32)
+		buf << byte(obj & 0xFF0000000000 >> 40)
+		buf << byte(obj & 0xFF000000000000 >> 48)
+		buf << byte(obj & 0xFF00000000000000 >> 56)
+	} $else $if T is string {
 		unsafe {
 			obj_ := *(&string(&obj))
-		}
-		serialize(CompactSize(u64(obj_.len)), mut buf)
-		buf.grow_len(obj_.len)
-		for i in 0..obj_.len {
-			unsafe {
+			serialize(CompactSize(u64(obj_.len)), mut buf)
+			buf.grow_len(obj_.len)
+			for i in 0..obj_.len {
 				buf << obj_.str[i]
 			}
 		}
-	} $else $if obj is Serializable {
+	} $else $if T is Serializable {
 		buf << obj.serialize(mut buf)
 	} $else {
 		$for field in T.fields {
 			$if field.typ is string {
-				mut padded := false
 				for attr in field.attrs {
 					if attr.starts_with('padded') {
-						padded = true
 						max_len := attr.split(': ')[1].int()
 						if obj.$(field.name).len > max_len {
 							panic('serialize: padded string too large')
@@ -115,12 +149,9 @@ pub fn serialize<T>(obj T, mut buf []byte) {
 						}
 					}
 				}
-				if !padded {
-					serialize<string>(obj.$(field.name), mut buf)
-				}
-			} $else {
-				serialize(obj.$(field.name), mut buf)
+				continue
 			}
+			serialize(obj.$(field.name), mut buf)
 		}
 	}
 }
@@ -134,17 +165,17 @@ pub fn serialize<T>(obj T, mut buf []byte) {
 	return ptr
 }*/
 
-fn deserialize_array<T>(mut arr []T, mut buf []byte) {
+pub fn deserialize_array<T>(mut arr []T, mut buf []byte) {
 	size := u64(deserialize<CompactSize>(mut buf))
 	unsafe {
-		arr.grow_len(int(size))
+		// arr.grow_len(int(size))
 	}
 	for _ in 0..size {
 		arr << T(deserialize<T>(mut buf))
 	}
 }
 
-fn deserialize_struct<T>(mut st T, mut buf []byte) {
+pub fn deserialize_struct<T>(mut st T, mut buf []byte) {
 	$for field in T.fields {
 		$if field.typ is voidptr {
 			panic('deserialize: cannot deserialize voidptr')
@@ -194,12 +225,6 @@ fn deserialize_struct<T>(mut st T, mut buf []byte) {
 			st.$(field.name) = deserialize<i64>(mut buf)
 		} $else $if field.typ is Serializable {
 			st.$(field.name).deserialize(mut buf)
-		} $else {
-			$if field.typ is T {
-				panic('deserialize: recursive struct')
-			}
-			// deserialize_struct(mut st.$(field.name), mut buf)
-			panic('deserialize: nested structs are prohibited for now')
 		}
 	}
 }
